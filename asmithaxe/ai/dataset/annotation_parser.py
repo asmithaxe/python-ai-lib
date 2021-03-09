@@ -50,10 +50,10 @@ class CvatAnnotationFileParser(AnnotationFileParser):
     def __init__(self, image_annotation_listeners, image_dict):
         super().__init__(image_annotation_listeners=image_annotation_listeners)
         self.image_dict = image_dict
+        self.logger.debug(f'Available images: {len(self.image_dict)}')
 
     def parse(self, annotation_filename):
         self.logger.debug(f'annotation_filename: {annotation_filename}')
-        self.logger.debug(f'image_dict.size: {len(self.image_dict)}')
         xml_tree = xml_parser.parse(annotation_filename)
         root_node = xml_tree.getroot()
         image_count = 0
@@ -93,70 +93,83 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
         self.image_patch_width = image_patch_width
         self.dataset_filter = dataset_filter
 
+        # Dump configuration to debug logs.
+        self.logger.debug(f'Available images: {len(self.image_dict)}')
+        self.logger.debug(f'image_patch_height: {self.image_patch_height}')
+        self.logger.debug(f'image_patch_width: {self.image_patch_width}')
+        self.logger.debug(f'dataset_filter: {self.dataset_filter}')
+
     def parse(self, annotation_filename):
         self.logger.debug(f'annotation_filename: {annotation_filename}')
-        self.logger.debug(f'image_dict.size: {len(self.image_dict)}')
-        csv_reader = csv.reader(open(annotation_filename), delimiter=',')
-        row_count = 0
-        current_file_id = None
-        image_annotation = None
-        object_annotations = []
-        image_count = 0
-        for row in csv_reader:
-            if row_count % 1000 == 0:
-                self.logger.debug(f'rows processed: {row_count}')
 
-            # Ignore the header row.
-            if row_count > 0:
-                file_id = row[0]
-                short_filename = row[0] + '.jpg'
+        # Build a map of annotations to each image.
+        image_to_annotations_dict = {}
+        csv_reader = csv.reader(open(annotation_filename), delimiter=',')
+        for row in csv_reader:
+            file_id = row[0]
+            short_filename = row[0] + '.jpg'
+            dataset = row[7]
+
+            # Check if the image is available for processing, and the dataset filter matches (if set).
+            if short_filename in self.image_dict and \
+                    (self.dataset_filter is None or self.dataset_filter == dataset):
+
                 y = int(row[1])
                 x = int(row[2])
                 label_name = row[3]
                 label = row[4]
                 func_group = row[5]
-                dataset = row[7]
 
-                # If a dataset filter has been specified, ignore any records that do not match.
-                if self.dataset_filter is None or self.dataset_filter == dataset:
+                if not short_filename in image_to_annotations_dict:
+                    image_to_annotations_dict[short_filename] = []
+                annotations = image_to_annotations_dict[short_filename]
+                annotations.append({
+                    'file_id': file_id,
+                    'short_filename': short_filename,
+                    'x': x,
+                    'y': y,
+                    'label_name': label_name,
+                    'label': label,
+                    'func_group': func_group,
+                    'dataset': dataset
+                })
 
-                    # Check if the image has changed.
-                    if not file_id == current_file_id:
+        # Process each image/annotation grouping.
+        image_count = 0
+        for short_filename in image_to_annotations_dict:
+            annotations = image_to_annotations_dict[short_filename]
+            image_count += 1
 
-                        # A different image is being annotated, so pass the current annotations to the processor.
-                        if len(object_annotations) > 0:
+            # Populate the image annotation.
+            image_filename = self.image_dict[short_filename]
+            image = Image.open(image_filename)
+            image_width, image_height = image.size
+            image_annotation = ImageAnnotation(image_filename=image_filename,
+                                               image_width=image_width,
+                                               image_height=image_height)
+            object_annotations = []
+            for annotation in annotations:
 
-                            for image_annotation_listener in self.image_annotation_listeners:
-                                image_annotation_listener(image_annotation, object_annotations)
+                # Capture the object annotations.
+                xmin = annotation['x'] - self.image_patch_width // 2
+                xmax = annotation['x'] + self.image_patch_width // 2
+                ymin = annotation['y'] - self.image_patch_height // 2
+                ymax = annotation['y'] + self.image_patch_height // 2
 
-                        # Start handling the new image.
-                        image_count += 1
-                        current_file_id = file_id
-                        image_filename = self.image_dict[short_filename]
-                        image = Image.open(image_filename)
-                        image_width, image_height = image.size
-                        image_annotation = ImageAnnotation(image_filename=image_filename,
-                                                           image_width=image_width,
-                                                           image_height=image_height)
-                        object_annotations = []
+                # Cache the object annotations if they fit entirely within the image.
+                if xmin > 0 \
+                        and xmax < image_annotation.image_width \
+                        and ymin > 0 \
+                        and ymax < image_annotation.image_height:
+                    object_annotations.append(ObjectAnnotation(class_id=annotation['label'],
+                                                               xmin=xmin,
+                                                               xmax=xmax,
+                                                               ymin=ymin,
+                                                               ymax=ymax))
 
-                    # Capture the object annotations.
-                    xmin = x - self.image_patch_width // 2
-                    xmax = x + self.image_patch_width // 2
-                    ymin = y - self.image_patch_height // 2
-                    ymax = y + self.image_patch_height // 2
-
-                    # Cache the object annotations if they fit entirely within the image.
-                    if xmin > 0 \
-                            and xmax < image_annotation.image_width \
-                            and ymin > 0 \
-                            and ymax < image_annotation.image_height:
-                        object_annotations.append(ObjectAnnotation(class_id=label,
-                                                                   xmin=xmin,
-                                                                   xmax=xmax,
-                                                                   ymin=ymin,
-                                                                   ymax=ymax))
-
-            row_count += 1
+            # Trigger registered annotation listeners.
+            if len(object_annotations) > 0:
+                for image_annotation_listener in self.image_annotation_listeners:
+                    image_annotation_listener(image_annotation, object_annotations)
 
         self.logger.debug(f'{image_count} images parsed.')
