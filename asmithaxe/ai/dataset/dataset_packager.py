@@ -41,11 +41,29 @@ class TensorFlowRecordDatasetPackager(DatasetPackager):
         height/width on not.
         """
         super().__init__()
+
+        # Cache the name of the dataset file to create and ensure it's path exists.
         self.dataset_filename = dataset_filename
+        path = os.path.split(self.dataset_filename)[0]
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        # Cache the name of the labelmap file to create and ensure it's path exists.
         self.labelmap_filename = labelmap_filename
+        path = os.path.split(self.labelmap_filename)[0]
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        # Cache other properties.
         self.normalise_bounding_boxes = normalise_bounding_boxes
+
+        # Instantiate a writer for generating the dataset file.
         self.dataset_writer = tf.io.TFRecordWriter(self.dataset_filename)
+
+        # Keep track of unique class ids for the labelmap file and also for referencing the class in the data.
         self.unique_class_ids = {}
+
+        # Keep track of images processed for information purposes.
         self.image_count = 0
 
     def append(self, image, image_annotation, object_annotations):
@@ -125,6 +143,8 @@ class StoreByFullFilenameDatasetPackager(DatasetPackager):
         """
         super().__init__()
         self.output_path = output_path
+        if not os.path.exists(self.output_path):
+            os.makedirs(self.output_path)
         self.image_count = 0
 
     def append(self, image, image_annotation, object_annotations):
@@ -150,6 +170,8 @@ class StoreByShortFilenameDatasetPackager(DatasetPackager):
         """
         super().__init__()
         self.output_path = output_path
+        if not os.path.exists(self.output_path):
+            os.makedirs(self.output_path)
         self.image_count = 0
 
     def append(self, image, image_annotation, object_annotations):
