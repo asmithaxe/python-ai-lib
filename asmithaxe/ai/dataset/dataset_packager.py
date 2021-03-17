@@ -31,12 +31,13 @@ class TensorFlowRecordDatasetPackager(DatasetPackager):
     Specialisation of the DatasetPackager for packaging an annotated image in a TensorFlowRecord file.
     """
 
-    def __init__(self, dataset_filename, labelmap_filename = None, normalise_bounding_boxes = True):
+    def __init__(self, dataset_filename, label_collector=None, normalise_bounding_boxes=True):
         """
         Capture the properties on instantiation.
 
         :param dataset_filename: the filename to use for the packaged dataset.
-        :param labelmap_filename: the filename for the labelmap file.
+        :param label_collector: helper object that maintains a list of unique labels and persists them to a LabelMap
+        file.
         :param normalise_bounding_boxes: flag that determines if the bounding box values are to be normalised with
         height/width on not.
         """
@@ -48,11 +49,8 @@ class TensorFlowRecordDatasetPackager(DatasetPackager):
         if not os.path.exists(path):
             os.makedirs(path)
 
-        # Cache the name of the labelmap file to create and ensure it's path exists.
-        self.labelmap_filename = labelmap_filename
-        path = os.path.split(self.labelmap_filename)[0]
-        if not os.path.exists(path):
-            os.makedirs(path)
+        # Cache the reference to the label collector.
+        self.label_collector = label_collector
 
         # Cache other properties.
         self.normalise_bounding_boxes = normalise_bounding_boxes
@@ -75,11 +73,10 @@ class TensorFlowRecordDatasetPackager(DatasetPackager):
         classes_text = []
         classes_id = []
         for object_annotation in object_annotations:
-            class_id = object_annotation.class_id
+            label = object_annotation.label
 
-            # Add the class to the list of unique class ids.
-            if class_id not in self.unique_class_ids:
-                self.unique_class_ids[class_id] = len(self.unique_class_ids) + 1
+            # Obtain the unique id for the label.
+            label_id = self.label_collector.find(label)
 
             # Transform the bounding box locations to fractions within the image size.
             xmins.append(
@@ -90,8 +87,8 @@ class TensorFlowRecordDatasetPackager(DatasetPackager):
                 object_annotation.ymin / image_annotation.image_height if self.normalise_bounding_boxes else object_annotation.ymin)
             ymaxs.append(
                 object_annotation.ymax / image_annotation.image_height if self.normalise_bounding_boxes else object_annotation.ymax)
-            classes_text.append(class_id.encode('utf8'))
-            classes_id.append(self.unique_class_ids[class_id])
+            classes_text.append(label.encode('utf8'))
+            classes_id.append(label_id)
 
         # encoded_image = image.getData()
         imageBuf = io.BytesIO()
@@ -117,15 +114,6 @@ class TensorFlowRecordDatasetPackager(DatasetPackager):
         self.logger.debug(f'{self.image_count} images packaged.')
         # Close the dataset file.
         self.dataset_writer.close()
-
-        # Write the LabelMap file.
-        if self.labelmap_filename is not None:
-            label_file = open(self.labelmap_filename, 'w')
-            for label in self.unique_class_ids:
-                label_file.write('item {\n')
-                label_file.write('id: ' + str(self.unique_class_ids[label]) + '\n')
-                label_file.write('name: \'' + label + '\'\n')
-                label_file.write('}\n')
 
 
 ########################################################################################################################

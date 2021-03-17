@@ -22,13 +22,15 @@ class AnnotationFileParser:
     instances. The listener(s) is registered during instantiation as an array of 'image_annotation_listeners'.
     """
 
-    def __init__(self, image_annotation_listeners):
+    def __init__(self, image_annotation_listeners, label_collector=None):
         """
         Capture any references.
 
         :param image_annotation_listeners: array of listener functions to be invoked for each annotated image.
+        :param label_collector: a label collector (if any) to collect the list of unique labels.
         """
         self.image_annotation_listeners = image_annotation_listeners
+        self.label_collector = label_collector
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def parse(self, annotation_filename):
@@ -37,7 +39,9 @@ class AnnotationFileParser:
 
         :param annotation_filename: the name of the annotation file to parse.
         """
-        pass
+        self.logger.debug(f'annotation_filename: {annotation_filename}')
+        if self.label_collector is not None:
+            self.label_collector.clear()
 
 
 ########################################################################################################################
@@ -47,13 +51,13 @@ class CvatAnnotationFileParser(AnnotationFileParser):
     Specialisation of the AnnotationFileParser for parsing CVAT annotation files.
     """
 
-    def __init__(self, image_annotation_listeners, image_dict):
-        super().__init__(image_annotation_listeners=image_annotation_listeners)
+    def __init__(self, image_annotation_listeners, image_dict, label_collector=None):
+        super().__init__(image_annotation_listeners=image_annotation_listeners, label_collector=label_collector)
         self.image_dict = image_dict
         self.logger.debug(f'Available images: {len(self.image_dict)}')
 
     def parse(self, annotation_filename):
-        self.logger.debug(f'annotation_filename: {annotation_filename}')
+        super().parse(annotation_filename)
         xml_tree = xml_parser.parse(annotation_filename)
         root_node = xml_tree.getroot()
         image_count = 0
@@ -66,7 +70,10 @@ class CvatAnnotationFileParser(AnnotationFileParser):
 
             object_annotations = []
             for box_node in image_node.findall('./box'):
-                object_annotations.append(ObjectAnnotation(box_node.attrib['label'],
+                label = box_node.attrib['label']
+                if self.label_collector is not None:
+                    self.label_collector.register(label)
+                object_annotations.append(ObjectAnnotation(label,
                                                            float(box_node.attrib['xtl']),
                                                            float(box_node.attrib['xbr']),
                                                            float(box_node.attrib['ytl']),
@@ -86,8 +93,8 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
     """
 
     def __init__(self, image_annotation_listeners, image_dict, image_patch_height, image_patch_width,
-                 dataset_filter=None):
-        super().__init__(image_annotation_listeners=image_annotation_listeners)
+                 dataset_filter=None, label_collector=None):
+        super().__init__(image_annotation_listeners=image_annotation_listeners, label_collector=label_collector)
         self.image_dict = image_dict
         self.image_patch_height = image_patch_height
         self.image_patch_width = image_patch_width
@@ -100,7 +107,7 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
         self.logger.debug(f'dataset_filter: {self.dataset_filter}')
 
     def parse(self, annotation_filename):
-        self.logger.debug(f'annotation_filename: {annotation_filename}')
+        super().parse(annotation_filename)
 
         # Build a map of annotations to each image.
         image_to_annotations_dict = {}
@@ -119,6 +126,9 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
                 label_name = row[3]
                 label = row[4]
                 func_group = row[5]
+
+                if self.label_collector is not None:
+                    self.label_collector.register(label)
 
                 if not short_filename in image_to_annotations_dict:
                     image_to_annotations_dict[short_filename] = []
@@ -161,7 +171,7 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
                         and xmax < image_annotation.image_width \
                         and ymin > 0 \
                         and ymax < image_annotation.image_height:
-                    object_annotations.append(ObjectAnnotation(class_id=annotation['label'],
+                    object_annotations.append(ObjectAnnotation(label=annotation['label'],
                                                                xmin=xmin,
                                                                xmax=xmax,
                                                                ymin=ymin,

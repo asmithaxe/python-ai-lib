@@ -22,8 +22,8 @@ class ObjectAnnotation:
     Value object representing the annotation of a single object within an annotated image.
     """
 
-    def __init__(self, class_id, xmin, xmax, ymin, ymax):
-        self.class_id = class_id
+    def __init__(self, label, xmin, xmax, ymin, ymax):
+        self.label = label
         self.xmin = xmin
         self.xmax = xmax
         self.ymin = ymin
