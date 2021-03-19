@@ -10,38 +10,52 @@ from PIL import Image
 import logging
 
 from .annotations import ImageAnnotation, ObjectAnnotation
+from .pipeline import PipelineStateListener
 from .utils import find_image_filename
 
 
 ########################################################################################################################
 
-class AnnotationFileParser:
+class AnnotationListener:
+    """
+    Interface for classes that want to be notified by an AnnotationFileParser that a complete annotation is available
+    for processing.
+    """
+
+    def on_annotation_available(self, image_annotation, object_annotations):
+        """
+        Invoked when a complete annotation is available for processing.
+        """
+    pass
+
+
+########################################################################################################################
+
+class AnnotationFileParser(PipelineStateListener):
     """
     Base class for objects that parse an annotation file and invoke a listener for each annotated image. The listener
     must accept two (2) variables: (1) a single ImageAnnotation instance; and (2) an array of ObjectAnnotation
     instances. The listener(s) is registered during instantiation as an array of 'image_annotation_listeners'.
     """
 
-    def __init__(self, image_annotation_listeners, label_collector=None):
+    def __init__(self, annotation_filename, annotation_listeners):
         """
         Capture any references.
 
-        :param image_annotation_listeners: array of listener functions to be invoked for each annotated image.
-        :param label_collector: a label collector (if any) to collect the list of unique labels.
-        """
-        self.image_annotation_listeners = image_annotation_listeners
-        self.label_collector = label_collector
-        self.logger = logging.getLogger(self.__class__.__name__)
-
-    def parse(self, annotation_filename):
-        """
-        Parse the annotation file and invoke the ImageProcessor for each annotated image.
-
         :param annotation_filename: the name of the annotation file to parse.
+        :param annotation_listeners: array of AnnotationListener implementations to notify when a complete annotation is
+        available.
         """
-        self.logger.debug(f'annotation_filename: {annotation_filename}')
-        if self.label_collector is not None:
-            self.label_collector.clear()
+        self.annotation_filename = annotation_filename
+        self.annotation_listeners = annotation_listeners
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.debug(f'annotation_filename: {self.annotation_filename}')
+
+    def on_pipeline_start(self):
+        pass
+
+    def on_pipeline_stop(self):
+        pass
 
 
 ########################################################################################################################
@@ -51,14 +65,14 @@ class CvatAnnotationFileParser(AnnotationFileParser):
     Specialisation of the AnnotationFileParser for parsing CVAT annotation files.
     """
 
-    def __init__(self, image_annotation_listeners, image_dict, label_collector=None):
-        super().__init__(image_annotation_listeners=image_annotation_listeners, label_collector=label_collector)
+    def __init__(self, annotation_filename, annotation_listeners, image_dict):
+        super().__init__(annotation_filename=annotation_filename, annotation_listeners=annotation_listeners)
         self.image_dict = image_dict
         self.logger.debug(f'Available images: {len(self.image_dict)}')
 
-    def parse(self, annotation_filename):
-        super().parse(annotation_filename)
-        xml_tree = xml_parser.parse(annotation_filename)
+    def on_pipeline_start(self):
+        super().on_pipeline_start()
+        xml_tree = xml_parser.parse(self.annotation_filename)
         root_node = xml_tree.getroot()
         image_count = 0
         for image_node in root_node.findall('./image'):
@@ -71,16 +85,14 @@ class CvatAnnotationFileParser(AnnotationFileParser):
             object_annotations = []
             for box_node in image_node.findall('./box'):
                 label = box_node.attrib['label']
-                if self.label_collector is not None:
-                    self.label_collector.register(label)
                 object_annotations.append(ObjectAnnotation(label,
                                                            float(box_node.attrib['xtl']),
                                                            float(box_node.attrib['xbr']),
                                                            float(box_node.attrib['ytl']),
                                                            float(box_node.attrib['ybr'])))
 
-            for image_annotation_listener in self.image_annotation_listeners:
-                image_annotation_listener(image_annotation, object_annotations)
+            for listener in self.annotation_listeners:
+                listener.on_annotation_available(image_annotation, object_annotations)
 
         self.logger.debug(f'{image_count} images parsed.')
 
@@ -92,9 +104,9 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
     Specialisation of the AnnotationFileParser for parsing the Catlin Seaview Survey CSV-based annotation files.
     """
 
-    def __init__(self, image_annotation_listeners, image_dict, image_patch_height, image_patch_width,
-                 dataset_filter=None, label_collector=None):
-        super().__init__(image_annotation_listeners=image_annotation_listeners, label_collector=label_collector)
+    def __init__(self, annotation_filename, annotation_listeners, image_dict, image_patch_height, image_patch_width,
+                 dataset_filter=None):
+        super().__init__(annotation_filename=annotation_filename, annotation_listeners=annotation_listeners)
         self.image_dict = image_dict
         self.image_patch_height = image_patch_height
         self.image_patch_width = image_patch_width
@@ -106,12 +118,12 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
         self.logger.debug(f'image_patch_width: {self.image_patch_width}')
         self.logger.debug(f'dataset_filter: {self.dataset_filter}')
 
-    def parse(self, annotation_filename):
-        super().parse(annotation_filename)
+    def on_pipeline_start(self):
+        super().on_pipeline_start()
 
         # Build a map of annotations to each image.
         image_to_annotations_dict = {}
-        csv_reader = csv.reader(open(annotation_filename), delimiter=',')
+        csv_reader = csv.reader(open(self.annotation_filename), delimiter=',')
         for row in csv_reader:
             file_id = row[0]
             short_filename = row[0] + '.jpg'
@@ -126,9 +138,6 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
                 label_name = row[3]
                 label = row[4]
                 func_group = row[5]
-
-                if self.label_collector is not None:
-                    self.label_collector.register(label)
 
                 if not short_filename in image_to_annotations_dict:
                     image_to_annotations_dict[short_filename] = []
@@ -179,7 +188,7 @@ class CatlinSeaviewSurveyCsvAnnotationFileParser(AnnotationFileParser):
 
             # Trigger registered annotation listeners.
             if len(object_annotations) > 0:
-                for image_annotation_listener in self.image_annotation_listeners:
-                    image_annotation_listener(image_annotation, object_annotations)
+                for listener in self.annotation_listeners:
+                    listener.on_annotation_available(image_annotation, object_annotations)
 
         self.logger.debug(f'{image_count} images parsed.')

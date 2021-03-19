@@ -10,8 +10,10 @@ import tensorflow as tf
 from object_detection.utils import dataset_util
 import logging
 
+from .image_processor import AnnotatedImageListener
+from .pipeline import PipelineStateListener
 
-class DatasetPackager:
+class DatasetPackager(AnnotatedImageListener, PipelineStateListener):
     """
     Base class for objects that package an annotated image.
     """
@@ -19,10 +21,13 @@ class DatasetPackager:
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def append(self, image, image_annotation, object_annotations):
+    def on_annotated_image_available(self, image, image_annotation, object_annotations):
         pass
 
-    def close(self):
+    def on_pipeline_start(self):
+        pass
+
+    def on_pipeline_stop(self):
         pass
 
 
@@ -64,7 +69,7 @@ class TensorFlowRecordDatasetPackager(DatasetPackager):
         # Keep track of images processed for information purposes.
         self.image_count = 0
 
-    def append(self, image, image_annotation, object_annotations):
+    def on_annotated_image_available(self, image, image_annotation, object_annotations):
         self.image_count += 1
         xmins = []
         xmaxs = []
@@ -110,7 +115,7 @@ class TensorFlowRecordDatasetPackager(DatasetPackager):
         }))
         self.dataset_writer.write(tf_example.SerializeToString())
 
-    def close(self):
+    def on_pipeline_stop(self):
         self.logger.debug(f'{self.image_count} images packaged.')
         # Close the dataset file.
         self.dataset_writer.close()
@@ -135,11 +140,11 @@ class StoreByFullFilenameDatasetPackager(DatasetPackager):
             os.makedirs(self.output_path)
         self.image_count = 0
 
-    def append(self, image, image_annotation, object_annotations):
+    def on_annotated_image_available(self, image, image_annotation, object_annotations):
         image.copy().save(os.path.join(self.output_path, image_annotation.image_filename))
         self.image_count += 1
 
-    def close(self):
+    def on_pipeline_stop(self):
         self.logger.debug(f'{self.image_count} images stored.')
 
 
@@ -162,11 +167,11 @@ class StoreByShortFilenameDatasetPackager(DatasetPackager):
             os.makedirs(self.output_path)
         self.image_count = 0
 
-    def append(self, image, image_annotation, object_annotations):
+    def on_annotated_image_available(self, image, image_annotation, object_annotations):
         image.save(os.path.join(self.output_path, os.path.basename(image_annotation.image_filename)))
         self.image_count += 1
 
-    def close(self):
+    def on_pipeline_stop(self):
         self.logger.debug(f'{self.image_count} images stored.')
 
 
@@ -188,7 +193,7 @@ class StoreByLabelDatasetPackager(DatasetPackager):
         self.output_path = output_path
         self.image_count = 0
 
-    def append(self, image, image_annotation, object_annotations):
+    def on_annotated_image_available(self, image, image_annotation, object_annotations):
 
         if len(object_annotations) > 0:
             object_annotation = object_annotations[0]
@@ -198,5 +203,5 @@ class StoreByLabelDatasetPackager(DatasetPackager):
             image.save(os.path.join(_output_path, os.path.basename(image_annotation.image_filename)))
             self.image_count += 1
 
-    def close(self):
+    def on_pipeline_stop(self):
         self.logger.debug(f'{self.image_count} images packaged.')

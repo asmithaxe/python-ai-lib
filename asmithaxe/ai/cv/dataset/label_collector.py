@@ -7,7 +7,10 @@ Copyright (c) 2021, Aaron Smith. All rights reserved.
 import logging
 import os
 
-class LabelCollector:
+from .annotation_parser import AnnotationListener
+from .pipeline import PipelineStateListener
+
+class LabelCollector(AnnotationListener, PipelineStateListener):
     """
     Base class that performs the function of collecting labels, and providing searching services. Specialisations of
     this class provide additional services, such as persistence services.
@@ -19,23 +22,18 @@ class LabelCollector:
         # Keep track of the unique labels.
         self.unique_labels = {}
 
-    def clear(self):
+    def on_annotation_available(self, image_annotation, object_annotations):
         """
-        Clear the collection ready to start accumulating fresh labels.
-        """
-        self.unique_labels = {}
-
-    def register(self, label):
-        """
-        Adds the specified label to the collection.
+        Checks for any new labels and add them to the list.
 
         :param label: the label to cache.
         """
 
-        # Add the class to the list of unique class ids.
-        if label not in self.unique_labels:
-            self.unique_labels[label] = len(self.unique_labels) + 1
-            self.logger.debug(f'Adding "{label}"')
+        for object_annotation in object_annotations:
+            label = object_annotation.label
+            if label not in self.unique_labels:
+                self.unique_labels[label] = len(self.unique_labels) + 1
+                self.logger.debug(f'Adding "{label}"')
 
     def find(self, label):
         """
@@ -73,7 +71,7 @@ class LabelMapLabelCollector(LabelCollector):
         if not os.path.exists(path):
             os.makedirs(path)
 
-    def persist(self):
+    def on_pipeline_stop(self):
         file = open(self.filename, 'w')
         for label in self.unique_labels:
             file.write('item {\n')
